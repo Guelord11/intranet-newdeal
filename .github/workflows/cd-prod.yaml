@@ -1,0 +1,88 @@
+name: CD - Prod Branch
+
+on:
+  push:
+    branches:
+      - prod
+
+env:
+  IMAGE_TAG: dev-latest
+  DOCKER_REPOSITORY: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal
+
+jobs:
+  security_scan:
+    name: Security scan before deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Scan repository secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan container image for CRITICAL vulnerabilities (block deploy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.DOCKER_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
+  deploy_prod:
+    name: Deploy on runner_prod
+    runs-on: runner_prod
+    needs: security_scan
+
+    steps:
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Pull production image
+        run: docker pull $DOCKER_REPOSITORY:$IMAGE_TAG
+
+      - name: Stop previous container
+        run: docker stop intranet-newdeal || true
+
+      - name: Remove previous container
+        run: docker rm intranet-newdeal || true
+
+      - name: Run container on port 80
+        run: |
+          docker run -d \
+            --name intranet-newdeal \
+            -p 80:80 \
+            --restart unless-stopped \
+            $DOCKER_REPOSITORY:$IMAGE_TAG
+
+  notify:
+    name: Email notification
+    runs-on: ubuntu-latest
+    needs:
+      - security_scan
+      - deploy_prod
+    if: always()
+
+    steps:
+      - name: Send pipeline email status
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[Prod Pipeline] intranet-newdeal - ${{ job.status }}"
+          to: ${{ secrets.NOTIFY_EMAIL_TO }}
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            Pipeline: CD - Prod Branch
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Status: ${{ job.status }}
+            Run URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
