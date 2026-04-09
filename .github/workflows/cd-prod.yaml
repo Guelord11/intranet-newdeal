@@ -35,7 +35,7 @@ jobs:
 
   deploy_prod:
     name: Deploy on runner_prod
-    runs-on: runner_prod
+    runs-on: [self-hosted, runner_prod]
     needs: security_scan
 
     steps:
