@@ -29,7 +29,7 @@ jobs:
           image-ref: ${{ env.DOCKER_REPOSITORY }}:${{ env.IMAGE_TAG }}
           format: table
           vuln-type: os,library
-          severity: CRITICAL
+          severity: CRITICAL 
           ignore-unfixed: true
           exit-code: 1
 
